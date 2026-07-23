@@ -15,18 +15,18 @@ sys.path.insert(0, os.path.dirname(__file__))
 import time
 import config
 from module import camera, uart
-from vision import rectangle, line, lane, edge, digit
+from vision import rectangle, line, lane, edge, line_histogram, digit
 from maix import display, app, image
 
 
 # ============================================================
-#  ★ 视觉模式: 'rectangle' | 'line' | 'lane' | 'edge'
+#  ★ 视觉模式: 'rectangle' | 'line' | 'lane' | 'edge' | 'histogram'
 # ============================================================
-VISION_MODE = 'line'
+VISION_MODE = 'histogram'
 # ============================================================
 #  调试开关（比赛前设为 False）
 # ============================================================
-DEBUG_DRAW   = True   # True=画面+绘图, False=纯算法+串口
+DEBUG_DRAW   = False   # True=画面+绘图, False=纯算法+串口
 SHOW_EVERY_N = 2        # 隔 N 帧推一次画面到 MaixVision
 PRINT_EVERY_N = 30      # 隔 N 帧打印一次 FPS + 分段计时
 # ============================================================
@@ -138,6 +138,18 @@ def task_edge(img):
     return result
 
 
+def task_histogram(img):
+    """直方图 + 滑动窗口 + 多项式拟合"""
+    global _n
+    _n += 1
+    result = line_histogram.track(img)
+    if result:
+        uart_send_coord(int(line_histogram.compute_steering(result, DETECT_W)), 0)
+    else:
+        uart_send_none()
+    return result
+
+
 def main():
     global _t0, _fps, _last_tx, _last_ty
 
@@ -147,10 +159,11 @@ def main():
 
     # 根据模式选择 task / draw
     tasks = {
-        'rectangle': (task_rectangle, rectangle.draw_debug, 'NO RECT', _RED),
-        'line':      (task_line,      line.draw_debug,      'NO LINE', _RED),
-        'lane':      (task_lane,      lane.draw_debug,      'NO LANE', _RED),
-        'edge':      (task_edge,      edge.draw_debug,      'NO EDGE', _RED),
+        'rectangle': (task_rectangle,   rectangle.draw_debug,       'NO RECT', _RED),
+        'line':      (task_line,        line.draw_debug,            'NO LINE', _RED),
+        'lane':      (task_lane,        lane.draw_debug,            'NO LANE', _RED),
+        'edge':      (task_edge,        edge.draw_debug,            'NO EDGE', _RED),
+        'histogram': (task_histogram,   line_histogram.draw_debug,  'NO LINE', _RED),
     }
     if VISION_MODE not in tasks:
         print(f"[MaixCAM] unknown VISION_MODE: {VISION_MODE}")
