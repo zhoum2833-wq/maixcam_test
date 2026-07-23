@@ -15,4 +15,4 @@ Thumbs.db
 model/*.tflite
 model/*.kmodel
 
-test_images/
+
