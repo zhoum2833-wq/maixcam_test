@@ -77,6 +77,21 @@ BALL_CONF_THRESH    = 0.45                           # 置信度阈值
 BALL_IOU_THRESH     = 0.45                           # NMS IoU 阈值
 BALL_SIZE_TOLERANCE = 0.30                           # 多目标尺寸容差（±30%，用于软过滤离群框）
 
+# ---- 跟踪 (algorithm/tracker.py) ----
+TRACKER_MAX_MOVE    = 60                             # 帧间最大移动距离 (px)，取决于车速+帧率
+TRACKER_MAX_MISS    = 2                              # 最大连续丢失帧数（超出删除该 track）
+TRACKER_MIN_HITS    = 2                              # 新目标最少连续命中次数（低于此值为 tentative）
+
+# ---- 摄像头 ISP ----
+CAM_ISP_LOCK        = False                          # ★ True=锁定曝光/增益（比赛+补光灯） False=自动（调试）
+CAM_AEC_ENABLE      = False                          # 自动曝光（仅 CAM_ISP_LOCK=True 时应用）
+CAM_AWB_ENABLE      = False                          # 自动白平衡（仅 CAM_ISP_LOCK=True 时应用）
+CAM_EXPOSURE_US     = 800                            # 手动曝光 (us)，<1000 保证运动清晰（需补光）
+CAM_ANALOG_GAIN     = 1.0                            # 手动增益（1.0=默认，增大画面变亮但噪点增多）
+CAM_LUMA            = 50                             # 亮度 0-100
+CAM_CONTRAST        = 50                             # 对比度 0-100
+CAM_SATURATION      = 50                             # 饱和度 0-100
+
 # ---- 识别 ----
 DIGIT_CONF_MIN    = 0.6
 MODEL_PATH        = "model/digit.tflite"

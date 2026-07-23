@@ -155,59 +155,96 @@ def detect(img):
 
 
 def draw_debug(img, result):
-    """在图像上绘制所有检测结果（调试用，仅 DEBUG_DRAW=True 时调用）"""
+    """在图像上绘制所有检测结果 + track 信息（调试用，仅 DEBUG_DRAW=True 时调用）
+
+    性能优化:
+      - O(1) track 查找（用 id() 字典，不用 O(n²) 距离匹配）
+      - 外接圆改为细线（减少光栅化开销）
+      - 标签精简到 3 字符（减少字体渲染）
+      - 纯预测 track 用 set 查找（避免 O(n²) 扫描）
+    """
     if result is None:
         return
 
     green   = mimg.Color.from_rgb(0, 255, 0)
     red     = mimg.Color.from_rgb(255, 0, 0)
     yellow  = mimg.Color.from_rgb(255, 255, 0)
-    magenta = mimg.Color.from_rgb(255, 0, 255)   # filtered 框用
+    magenta = mimg.Color.from_rgb(255, 0, 255)
+    cyan    = mimg.Color.from_rgb(0, 255, 255)
+    orange  = mimg.Color.from_rgb(255, 165, 0)
+    grey    = mimg.Color.from_rgb(128, 128, 128)
     white   = mimg.Color.from_rgb(255, 255, 255)
 
     balls = result.get('balls', [])
     if not balls and result.get('center'):
-        # 兼容旧格式（单目标 dict）
         balls = [result]
+
+    # O(1) 查找: 用 detection 对象 id 直接映射到 track
+    det_to_track = result.get('_det_to_track', {})
+
+    # 收集已匹配的检测中心（用于纯预测 track 的快速去重）
+    matched_centers = set()
 
     for b in balls:
         center = b['center']
-        radius = b.get('radius', 10)
         x, y, w, h = b.get('rect', (0, 0, 0, 0))
         score  = b.get('score', 0.0)
         filtered = b.get('filtered', False)
 
-        # 被过滤的框用洋红色 + 虚线风格（细线）
-        rect_color = magenta if filtered else yellow
-        circ_color = magenta if filtered else green
-        thickness  = 1 if filtered else 2
+        match_track = det_to_track.get(id(b))
+        if match_track:
+            matched_centers.add(match_track['center'])
 
-        # 外接圆
-        img.draw_circle(center[0], center[1], radius, color=circ_color, thickness=thickness)
-        # 边界框
+        # 颜色: filtered > track 状态 > 默认
+        if filtered:
+            rect_color = magenta
+            thickness  = 1
+        elif match_track:
+            if match_track['predicted']:
+                rect_color = orange
+            elif not match_track['confirmed']:
+                rect_color = grey
+            else:
+                rect_color = cyan
+            thickness = 2
+        else:
+            rect_color = yellow
+            thickness = 2
+
+        # 只画边界框 + 圆心十字（外接圆太贵，砍掉）
         img.draw_rect(x, y, w, h, color=rect_color, thickness=thickness)
-        # 圆心十字
         img.draw_circle(center[0], center[1], 2, color=red, thickness=2)
 
-        # 标签
-        flag = "?" if filtered else ""
-        img.draw_string(x, max(y - 12, 0), f"ball{flag} {score:.2f}",
-                        color=rect_color, scale=1.0)
+        # 精简标签: 只显示 track ID（1 字符）+ 过滤标记
+        parts = []
+        if filtered:
+            parts.append("?")
+        if match_track:
+            parts.append(str(match_track['id']))
+        if match_track and match_track['predicted']:
+            parts.append("P")
+        label = "".join(parts) if parts else None
+        if label:
+            img.draw_string(x, max(y - 12, 0), label, color=rect_color, scale=1.0)
 
-    # 左上角统计信息
+    # 纯预测 track（无匹配检测）→ 小十字标记
+    tracks = result.get('tracks', [])
+    if tracks:
+        for t in tracks:
+            if t['predicted'] and t['confirmed']:
+                if t['center'] not in matched_centers:
+                    cx, cy = t['center']
+                    img.draw_line(cx - 4, cy, cx + 4, cy, color=orange, thickness=1)
+                    img.draw_line(cx, cy - 4, cx, cy + 4, color=orange, thickness=1)
+
+    # 左上角统计
     count = result.get('count', len(balls))
     count_raw = result.get('count_raw', len(balls))
     n_filtered = count_raw - count
-    med_area = result.get('median_area', 0)
+    track_cnt = result.get('track_count', len(tracks))
+    track_conf = result.get('track_confirmed', 0)
 
-    status = f"balls:{count}"
+    status = f"balls:{count} trk:{track_conf}/{track_cnt}"
     if n_filtered > 0:
-        status += f" (flt:{n_filtered})"
+        status += f" flt:{n_filtered}"
     img.draw_string(0, 0, status, color=white, scale=1.2)
-
-    primary = result.get('primary')
-    if primary:
-        img.draw_string(0, 16,
-                        f"P:{primary['center'][0]},{primary['center'][1]} "
-                        f"r={primary['radius']}",
-                        color=white, scale=1.0)

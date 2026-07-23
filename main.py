@@ -16,6 +16,7 @@ import time
 import config
 from module import camera, uart
 from vision import rectangle, line, lane, edge, line_histogram, digit, ball
+from algorithm import tracker as alg_tracker
 from maix import display, app, image
 
 
@@ -26,7 +27,7 @@ VISION_MODE = 'ball'
 # ============================================================
 #  调试开关（比赛前设为 False）
 # ============================================================
-DEBUG_DRAW   = True   # True=画面+绘图, False=纯算法+串口
+DEBUG_DRAW   = False   # True=画面+绘图, False=纯算法+串口
 SHOW_EVERY_N = 2        # 隔 N 帧推一次画面到 MaixVision
 PRINT_EVERY_N = 30      # 隔 N 帧打印一次 FPS + 分段计时
 # ============================================================
@@ -51,6 +52,13 @@ _disp = None
 _n = 0
 _t0 = 0.0
 _fps = 0.0
+
+# 帧间跟踪器（保持 UART 输出连续性，防止单帧漏检导致控制震荡）
+_tracker = alg_tracker.BallTracker(
+    max_move=getattr(config, 'TRACKER_MAX_MOVE', 60),
+    max_miss=getattr(config, 'TRACKER_MAX_MISS', 2),
+    min_hits=getattr(config, 'TRACKER_MIN_HITS', 2),
+)
 
 # 上一次发送的坐标（用于 UART 去重）
 _last_tx, _last_ty = 999, 999
@@ -156,16 +164,78 @@ def task_histogram(img):
 
 
 def task_ball(img):
-    """钢球检测 — YOLOv5s 320×320 多目标 + 尺寸软过滤"""
+    """钢球检测 — YOLOv5s 多目标 + 帧间跟踪 + 预测补帧"""
     global _n
     _n += 1
+
     result = ball.detect(img)
-    if result:
-        # 多目标场景: 串口只发 primary（首选目标）
-        uart_send_coord(*result['offset'])
+
+    # 取原始检测列表（None → 空列表）
+    detections = result['balls'] if result else []
+    tracks = _tracker.update(detections)
+
+    if tracks:
+        # 选 UART 发送目标（优先级逐级降级）
+        primary = _pick_primary_track(tracks, img.width(), img.height())
+        if primary:
+            uart_send_coord(*primary['offset'])
+        else:
+            uart_send_none()
     else:
         uart_send_none()
+
+    # 打包 tracking 信息到 result
+    if result is None:
+        result = {}
+    result['tracks'] = tracks
+    result['track_count'] = len(tracks)
+    result['track_confirmed'] = _tracker.confirmed_count
+
+    # 构建 detection→track O(1) 查找表（供 draw_debug 用，避免 O(n²) 距离匹配）
+    det_to_track = {}
+    for t in tracks:
+        raw = t.get('raw')
+        if raw is not None:
+            det_to_track[id(raw)] = t
+    result['_det_to_track'] = det_to_track
+
     return result
+
+
+def _pick_primary_track(tracks, img_w, img_h):
+    """
+    从 tracks 中选出 UART 发送目标，按优先级降级:
+
+    1. 已确认 + 当前帧匹配成功（最佳）
+    2. 已确认 + 预测位置（1-2 帧短暂丢失，预测值维持输出连续性）
+    3. 未确认的新目标（首次出现，先发送再说）
+    """
+    img_cx, img_cy = img_w // 2, img_h // 2
+
+    def _to_offset(t):
+        return (img_cx - t['center'][0], img_cy - t['center'][1])
+
+    # 优先级 1: 已确认 + 匹配成功
+    confirmed_active = [t for t in tracks
+                        if t['confirmed'] and not t['predicted']]
+    if confirmed_active:
+        # 选离中心最近的
+        t = min(confirmed_active, key=lambda t: abs(t['center'][0] - img_cx))
+        return {'offset': _to_offset(t), 'track': t}
+
+    # 优先级 2: 已确认 + 预测位置（短暂丢失）
+    confirmed_pred = [t for t in tracks
+                      if t['confirmed'] and t['predicted']]
+    if confirmed_pred:
+        t = min(confirmed_pred, key=lambda t: t['missed'])  # 丢帧最少的
+        return {'offset': _to_offset(t), 'track': t}
+
+    # 优先级 3: 未确认新目标
+    if tracks:
+        t = tracks[0]  # ID 最小的（最早出现）
+        return {'offset': _to_offset(t), 'track': t}
+
+    return None
 
 
 def main():
@@ -249,7 +319,7 @@ def main():
                 dt_total  = (t_draw   - t0)       * 1000
                 extra = ""
                 if VISION_MODE == 'ball' and result:
-                    extra = f" balls:{result['count']}/{result['count_raw']}"
+                    extra = f" balls:{result.get('count',0)}/{result.get('count_raw',0)} trk:{result.get('track_confirmed',0)}"
                 print(f"[FPS] {_fps:.1f}  total:{dt_total:.1f}ms | cap:{dt_cap:.1f} detect:{dt_detect:.1f} draw:{dt_draw:.1f}{extra}")
 
     except KeyboardInterrupt:
