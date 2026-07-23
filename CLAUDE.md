@@ -91,6 +91,36 @@ MaixPy 4.12 的 API 入口是 `maix.*`，**不是** `media.*`。
 | Display | ✅ | `disp.show(img)` 自动同步到 MaixVision |
 | 工程 import 机制 | ✅ | `sys.path.insert(0, os.path.dirname(__file__))` 正确解析 module/ vision/ |
 
+## 架构规范（★ 强制）
+
+```
+main.py  ← 唯一入口，所有业务逻辑、主循环、时序控制全在这里
+  │
+  ├── module/     ← 只暴露类，不执行任何顶层代码
+  ├── vision/     ← 只暴露函数，不执行任何顶层代码
+  └── algorithm/  ← 只暴露类/函数，不执行任何顶层代码
+```
+
+| 规则 | 说明 |
+|------|------|
+| ✅ main.py 唯一入口 | 一切业务逻辑、主循环、时序控制全部收拢到 `main.py` |
+| ✅ 模块只定义 | `module/` `vision/` `algorithm/` 里**只能有**类和函数定义 |
+| ❌ 禁止模块顶层执行 | 模块文件里**禁止** `while True:`、`print()`、`app.need_exit()` 等顶层执行代码 |
+| ✅ 模块暴露接口 | 模块对外暴露方法/类，等待 `main.py` 调用 |
+
+```python
+# ✅ 正确的模块写法 (vision/xxx.py)
+def detect(img):
+    ...  # 纯函数，被 main.py 调用
+    return result
+
+# ❌ 错误的模块写法
+cam = Camera()           # 顶层实例化
+while True:              # 顶层死循环
+    img = cam.capture()
+    print(detect(img))   # 顶层 print
+```
+
 ## 规范
 
 - 测试脚本独立运行，不依赖其他测试
