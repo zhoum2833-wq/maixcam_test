@@ -1,19 +1,13 @@
 id: maixcam_test
 name: 视觉测试
-version: 1.0.0
+version: 1.1.0
 author: cfyh
 icon: ''
 desc: 视觉模块测试工程
 files:
-  - algorithm\__init__.py
-  - algorithm\pid.py
-  - model\__init__.py
   - module\__init__.py
   - module\camera.py
   - module\uart.py
-  - test\__init__.py
-  - test\test_camera.py
-  - test\test_uart.py
   - vision\__init__.py
   - vision\digit.py
   - vision\line.py
