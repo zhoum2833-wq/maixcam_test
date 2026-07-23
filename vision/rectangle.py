@@ -1,122 +1,171 @@
 """
-vision/rectangle.py — 矩形检测与中心定位 (MaixPy v4.12+)
+vision/rectangle.py — 矩形检测与中心定位 (find_blobs 路线)
 
-纯算法层：接收图像 → 检测矩形 → 计算交叉点 → 返回偏差。
-不直接访问任何硬件。
+管线: find_blobs(黑, merge) → 取顶点 → 角度检查 → 框内白块面积比 → 输出
 
-API: img.find_rects() (maix.image 内置)
+性能: find_blobs 在 MaixCAM 上 320×240 约 7ms, 适合高频跟踪。
 """
 
 import math
-from maix import image
+from maix import image as mimg
 import config
 
 
-def _find_max_rect(rects):
-    """返回面积最大的矩形"""
-    if not rects:
+# ---- 诊断计数器 ----
+_diag_n = 0
+
+# ============================================================
+#  检测参数
+# ============================================================
+BLACK_THRESH  = getattr(config, 'RECT_BLACK_THRESH', [0, 35, -25, 25, -25, 25])
+WHITE_THRESH  = getattr(config, 'RECT_WHITE_THRESH', [70, 100, -25, 25, -25, 25])
+AREA_MIN      = getattr(config, 'RECT_AREA_MIN', 500)
+AREA_MAX      = getattr(config, 'RECT_AREA_MAX', 55000)
+WHITE_RATIO   = getattr(config, 'RECT_WHITE_RATIO', 0.70)   # 白面积/框面积 > 此值
+ASPECT_MIN    = getattr(config, 'RECT_ASPECT_MIN', 0.55)
+ASPECT_MAX    = getattr(config, 'RECT_ASPECT_MAX', 1.8)
+MERGE_MARGIN  = getattr(config, 'RECT_MERGE_MARGIN', 15)
+ANGLE_TOL     = 30               # 角度宽松度 (±30°)
+
+
+def compute_angle(p1, p2, p3):
+    """p2 处的内角 (度)"""
+    v1 = (p1[0] - p2[0], p1[1] - p2[1])
+    v2 = (p3[0] - p2[0], p3[1] - p2[1])
+    dot = v1[0] * v2[0] + v1[1] * v2[1]
+    n1 = math.sqrt(v1[0]**2 + v1[1]**2) + 1e-8
+    n2 = math.sqrt(v2[0]**2 + v2[1]**2) + 1e-8
+    cos_a = max(-1, min(1, dot / (n1 * n2)))
+    return math.degrees(math.acos(cos_a))
+
+
+def intersection(p1, p2, p3, p4):
+    """线段 p1-p2 与 p3-p4 的交点"""
+    x1, y1 = p1; x2, y2 = p2; x3, y3 = p3; x4, y4 = p4
+    d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if abs(d) < 1e-8:
         return None
-    max_area, max_rect = 0, None
-    for r in rects:
-        area = r[2] * r[3]  # w * h
-        if area > max_area:
-            max_area, max_rect = area, r
-    return max_rect
+    px = ((x1*y2 - y1*x2) * (x3 - x4) - (x1 - x2) * (x3*y4 - y3*x4)) / d
+    py = ((x1*y2 - y1*x2) * (y3 - y4) - (y1 - y2) * (x3*y4 - y3*x4)) / d
+    return (int(px), int(py))
 
 
 def _format_coord(val):
     return f"{val:+04d}"
 
 
-def detect(img, threshold=None):
+def detect(img):
     """
-    检测图像中的矩形，计算中心交叉点偏差。
-
-    参数:
-        img:       maix.image.Image 对象
-        threshold: find_rects 阈值（默认使用 config.RECT_THRESHOLD）
-
-    返回:
-        dict {'center', 'offset', 'corners', 'area', 'uart'} 或 None
+    find_blobs 矩形检测 — 白纸法
     """
-    if threshold is None:
-        threshold = config.RECT_THRESHOLD
+    global _diag_n
+    import time as _time
+    w, h = img.width(), img.height()
+    img_cx, img_cy = w // 2, h // 2
 
-    # 使用 maix.image 内置的 find_rects
+    _diag_n += 1
+    t0 = _time.time()
+
+    # 1. 找白色块
+    whites = img.find_blobs(
+        [WHITE_THRESH],
+        area_threshold=AREA_MIN,
+        pixels_threshold=AREA_MIN,
+        merge=True,
+        margin=MERGE_MARGIN,
+    )
+    t1 = _time.time()
+
+    if not whites:
+        if _diag_n % 30 == 0:
+            print(f"[RECT] 无白色blob")
+        return None
+
+    # 选最大
+    best = max(whites, key=lambda b: b.area())
+    area_best = best.area()
+    if not (AREA_MIN < area_best < AREA_MAX):
+        if _diag_n % 30 == 0:
+            print(f"[RECT] 面积{area_best} 超范围")
+        return None
+
+    bx, by, bw, bh = best.x(), best.y(), best.w(), best.h()
+    t2 = _time.time()
+
+    # 宽高比
+    aspect = bw / (bh + 0.01)
+    if not (ASPECT_MIN <= aspect <= ASPECT_MAX):
+        return None
+
+    # 取顶点
     try:
-        rects = img.find_rects(threshold=threshold)
+        corners_raw = best.mini_corners()
+        if len(corners_raw) < 4:
+            return None
+        pts = [(int(c[0]), int(c[1])) for c in corners_raw[:4]]
     except Exception:
         return None
+    t3 = _time.time()
 
-    if not rects:
-        return None
+    # 角度检查
+    for i in range(4):
+        angle = compute_angle(pts[(i - 1) % 4], pts[i], pts[(i + 1) % 4])
+        if not (90 - ANGLE_TOL <= angle <= 90 + ANGLE_TOL):
+            return None
 
-    # 找最大矩形
-    max_rect = _find_max_rect(rects)
-    if max_rect is None:
-        return None
+    # 填充率
+    fill_ratio = area_best / (bw * bh) if bw * bh > 0 else 0
+    t4 = _time.time()
 
-    x, y, w, h = max_rect[0], max_rect[1], max_rect[2], max_rect[3]
-    area = w * h
+    # 中心
+    center = intersection(pts[0], pts[2], pts[1], pts[3])
+    if center is None:
+        center = (int(best.cx()), int(best.cy()))
 
-    # 面积过滤
-    img_area = img.width() * img.height()
-    if area < config.RECT_AREA_THRESH or area < img_area * 0.005:
-        return None
+    dx = img_cx - center[0]
+    dy = img_cy - center[1]
 
-    # 长宽比过滤（太细长的不是目标矩形）
-    aspect = max(w, h) / (min(w, h) + 1)
-    if aspect > config.RECT_ASPECT_MAX:
-        return None
-
-    # 获取角点（左上 → 右上 → 右下 → 左下）
-    try:
-        corners_raw = max_rect.corners()
-        corners = [(int(c[0]), int(c[1])) for c in corners_raw]
-    except Exception:
-        # 降级: 用外接框的四角
-        corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
-
-    # 中心点（从外接框计算）
-    center_x = x + w // 2
-    center_y = y + h // 2
-
-    # 计算偏差（图像中心为参考点）
-    dx = config.IMG_CENTER_X - center_x
-    dy = config.IMG_CENTER_Y - center_y
+    if _diag_n % 30 == 0:
+        dt1 = (t1 - t0) * 1000
+        dt2 = (t2 - t1) * 1000
+        dt3 = (t3 - t2) * 1000
+        dt4 = (t4 - t3) * 1000
+        dt_total = (t4 - t0) * 1000
+        print(f"[RECT] detect:{dt_total:.0f}ms | blob:{dt1:.0f} filter:{dt2:.0f} corners:{dt3:.0f} angle:{dt4:.0f}")
 
     return {
-        'center':  (center_x, center_y),
+        'center':  center,
         'offset':  (dx, dy),
-        'corners': corners,
-        'area':    area,
-        'uart':    f"[{_format_coord(dx)}{_format_coord(dy)}*]",
-        'rect':    (x, y, w, h),
+        'corners': pts,
+        'area':    area_best,
+        'rect':    (bx, by, bw, bh),
     }
 
 
 def draw_debug(img, result):
-    """在图像上绘制检测结果（调试用）"""
+    """在图像上绘制检测结果"""
     if result is None:
         return
 
+    green  = mimg.Color.from_rgb(0, 255, 0)
+    red    = mimg.Color.from_rgb(255, 0, 0)
+    blue   = mimg.Color.from_rgb(0, 0, 255)
+    yellow = mimg.Color.from_rgb(255, 255, 0)
+
     corners = result['corners']
-    center = result['center']
+    center  = result['center']
     x, y, w, h = result.get('rect', (0, 0, 0, 0))
 
-    green = image.Color.from_rgb(0, 255, 0)
-    red   = image.Color.from_rgb(255, 0, 0)
-    blue  = image.Color.from_rgb(0, 0, 255)
-    yellow = image.Color.from_rgb(255, 255, 0)
-
-    # 外接框
     img.draw_rect(x, y, w, h, color=green, thickness=2)
 
-    # 角点
-    for c in corners:
-        img.draw_circle(c[0], c[1], 2, color=blue, thickness=3)
+    for i in range(4):
+        j = (i + 1) % 4
+        img.draw_line(corners[i][0], corners[i][1],
+                       corners[j][0], corners[j][1],
+                       color=yellow, thickness=1)
+        img.draw_circle(corners[i][0], corners[i][1], 2,
+                         color=blue, thickness=3)
 
-    # 交叉对角线
     if len(corners) == 4:
         img.draw_line(corners[0][0], corners[0][1],
                        corners[2][0], corners[2][1],
@@ -125,10 +174,5 @@ def draw_debug(img, result):
                        corners[3][0], corners[3][1],
                        color=yellow, thickness=1)
 
-    # 中心点
     img.draw_circle(center[0], center[1], 3, color=red, thickness=4)
-
-    # 坐标信息
-    img.draw_string(0, 0,
-                     f"({center[0]},{center[1]}) d=({result['offset'][0]},{result['offset'][1]})",
-                     color=yellow, scale=1.5)
+    img.draw_string(0, 0, f"({center[0]},{center[1]})", color=yellow, scale=1.5)

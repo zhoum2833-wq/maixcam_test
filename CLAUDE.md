@@ -127,3 +127,36 @@ while True:              # 顶层死循环
 - 必须验证边界条件（None、超时、格式错误等）
 - 测试注释写清楚"期望什么、实际什么"
 - 所有 import 使用 `maix.*` API，禁止使用 `media.*` / `machine.*` 旧 API
+- 视觉性能目标：稳定 80-100Hz（详见 `docs/vision_targets.md`）
+
+## 调试模式与性能测试（★ 必读）
+
+`main.py` 顶部有三个开关控制运行行为：
+
+```python
+DEBUG_DRAW   = True     # True=画面+绘图, False=纯算法+串口
+SHOW_EVERY_N = 2        # 隔 N 帧推一次画面到 MaixVision
+PRINT_EVERY_N = 50      # 隔 N 帧打印一次 FPS
+```
+
+### 三阶段工作流
+
+| 阶段 | DEBUG_DRAW | SHOW_EVERY_N | 目标 |
+|------|:--:|:--:|------|
+| 1. 线上调试 | `True` | 2 | 调阈值、观察目标、排查 bug |
+| 2. 性能测速 | `False` | — | 关画面、关绘图，摸真实帧率 |
+| 3. 脱机验证 | `False` | — | 部署 app，独立供电运行 |
+
+### 关键规则
+
+- ❌ **禁止拿 MaixVision 连接时的帧率当作最终性能指标** — `disp.show()` 推流 + 绘图算子会吃掉大量帧率
+- ✅ 性能摸底时必须 `DEBUG_DRAW = False`，只跑算法 + 串口
+- ✅ 隔帧推画面 (`SHOW_EVERY_N=2`) 可在保留画面的同时减少 WiFi 开销
+- ✅ 最终脱机验证前，PID 参数需要在接近真实帧率的工况下整定，否则脱机后帧率上升容易震荡
+
+### 调试损耗来源（从大到小）
+
+1. **图像推流** (`disp.show()`) — 编码 + USB/WiFi 上传，最大元凶
+2. **绘图算子** (`draw_rect`/`draw_line`/`draw_string`) — CPU 密集运算
+3. **print()** — 串口阻塞输出
+4. **IDE 通信心跳** — 持续占用少量资源

@@ -18,10 +18,15 @@ CAM_PIXFMT        = "RGB888"          # RGB888 / RGB565 / GRAYSCALE
 DISP_WIDTH        = 640               # MaixCAM Pro: 2.4" 640x480
 DISP_HEIGHT       = 480
 
-# ---- 矩形检测 (img.find_rects) ----
-RECT_THRESHOLD    = 12000            # find_rects 阈值（越大越严格，默认 10000）
-RECT_AREA_THRESH  = 2000             # 最小面积（像素）
-RECT_ASPECT_MAX   = 5.0              # 最大长宽比（超过视为噪声）
+# ---- 矩形检测 (find_blobs 路线) ----
+RECT_BLACK_THRESH  = [0, 15, -20, 20, -20, 20]   # LAB 黑色（备用）
+RECT_WHITE_THRESH  = [60, 100, -30, 30, -30, 30] # LAB 白色（主检测目标，放宽A/B）
+RECT_AREA_MIN      = 500                          # 最小黑色 blob 面积
+RECT_AREA_MAX      = 55000                        # 最大黑色 blob 面积
+RECT_WHITE_RATIO   = 0.70                         # 框内白色面积/框面积 > 此值
+RECT_ASPECT_MIN    = 0.55                         # 最小宽高比
+RECT_ASPECT_MAX    = 1.8                          # 最大宽高比
+RECT_MERGE_MARGIN  = 15                           # merge 合并距离
 
 # ---- 图像中心参考点 ----
 IMG_CENTER_X      = 240               # CAM_WIDTH / 2
