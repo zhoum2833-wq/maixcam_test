@@ -14,3 +14,5 @@ Thumbs.db
 # Model files (large, stored separately or in releases)
 model/*.tflite
 model/*.kmodel
+
+.test_images/*
