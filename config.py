@@ -18,16 +18,10 @@ CAM_PIXFMT        = "RGB888"          # RGB888 / RGB565 / GRAYSCALE
 DISP_WIDTH        = 640               # MaixCAM Pro: 2.4" 640x480
 DISP_HEIGHT       = 480
 
-# ---- 矩形检测 (cv_lite 参数) ----
-RECT_CANNY_LO     = 50
-RECT_CANNY_HI     = 150
-RECT_EPSILON      = 0.04
-RECT_AREA_MIN     = 0.001
-RECT_MAX_ANGLE    = 0.5
-RECT_GAUSS_SIZE   = 5
-RECT_AREA_THRESH  = 2000
-RECT_LEN_THRESH   = 120
-RECT_MIN_EDGE     = 30
+# ---- 矩形检测 (img.find_rects) ----
+RECT_THRESHOLD    = 12000            # find_rects 阈值（越大越严格，默认 10000）
+RECT_AREA_THRESH  = 2000             # 最小面积（像素）
+RECT_ASPECT_MAX   = 5.0              # 最大长宽比（超过视为噪声）
 
 # ---- 图像中心参考点 ----
 IMG_CENTER_X      = 240               # CAM_WIDTH / 2
