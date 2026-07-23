@@ -66,6 +66,17 @@ EDGE_ASPECT_MIN   = 1.5                   # 最小高/宽比
 EDGE_MIN_HEIGHT   = 20                    # 最低高度
 EDGE_REF_X        = 40                    # 目标：线边缘应该保持在这个 x 位置
 
+# ============================================================
+#  场景 E: 钢球检测 (vision/ball.py)
+#  YOLOv5s 深度学习模型 → 直接检测钢球
+#  模型: model/ball.model/model_295152.mud (cvimodel, 320×320)
+#  数据集: 2910 张, mAP 0.745, 标签: ball
+# ============================================================
+BALL_MODEL_PATH     = "model/ball.model/model_295152.mud"
+BALL_CONF_THRESH    = 0.45                           # 置信度阈值
+BALL_IOU_THRESH     = 0.45                           # NMS IoU 阈值
+BALL_SIZE_TOLERANCE = 0.30                           # 多目标尺寸容差（±30%，用于软过滤离群框）
+
 # ---- 识别 ----
 DIGIT_CONF_MIN    = 0.6
 MODEL_PATH        = "model/digit.tflite"

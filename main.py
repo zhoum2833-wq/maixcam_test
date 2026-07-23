@@ -15,18 +15,18 @@ sys.path.insert(0, os.path.dirname(__file__))
 import time
 import config
 from module import camera, uart
-from vision import rectangle, line, lane, edge, line_histogram, digit
+from vision import rectangle, line, lane, edge, line_histogram, digit, ball
 from maix import display, app, image
 
 
 # ============================================================
-#  ★ 视觉模式: 'rectangle' | 'line' | 'lane' | 'edge' | 'histogram'
+#  ★ 视觉模式: 'rectangle' | 'line' | 'lane' | 'edge' | 'histogram' | 'ball'
 # ============================================================
-VISION_MODE = 'histogram'
+VISION_MODE = 'ball'
 # ============================================================
 #  调试开关（比赛前设为 False）
 # ============================================================
-DEBUG_DRAW   = False   # True=画面+绘图, False=纯算法+串口
+DEBUG_DRAW   = True   # True=画面+绘图, False=纯算法+串口
 SHOW_EVERY_N = 2        # 隔 N 帧推一次画面到 MaixVision
 PRINT_EVERY_N = 30      # 隔 N 帧打印一次 FPS + 分段计时
 # ============================================================
@@ -34,8 +34,13 @@ PRINT_EVERY_N = 30      # 隔 N 帧打印一次 FPS + 分段计时
 # ============================================================
 #  性能参数
 # ============================================================
-DETECT_W, DETECT_H = 320, 240   # 原生分辨率，cam.read() 只要 1ms
+DETECT_W, DETECT_H = 320, 240   # 默认分辨率
 UART_THRESH = 5                  # 坐标变化超过此像素才发送，减少串口阻塞
+
+# 各模式可覆盖分辨率（模型输入尺寸要求）
+MODE_RESOLUTION = {
+    'ball': (320, 320),  # YOLOv5s 模型输入 320×320
+}
 # ============================================================
 
 
@@ -150,12 +155,24 @@ def task_histogram(img):
     return result
 
 
+def task_ball(img):
+    """钢球检测 — YOLOv5s 320×320 多目标 + 尺寸软过滤"""
+    global _n
+    _n += 1
+    result = ball.detect(img)
+    if result:
+        # 多目标场景: 串口只发 primary（首选目标）
+        uart_send_coord(*result['offset'])
+    else:
+        uart_send_none()
+    return result
+
+
 def main():
     global _t0, _fps, _last_tx, _last_ty
 
     print("[MaixCAM] === vision start ===")
     print(f"[MaixCAM] mode:{VISION_MODE} DEBUG_DRAW={DEBUG_DRAW} SHOW_EVERY_N={SHOW_EVERY_N}")
-    print(f"[MaixCAM] detect: {DETECT_W}x{DETECT_H}  uart_thresh:{UART_THRESH}px")
 
     # 根据模式选择 task / draw
     tasks = {
@@ -164,13 +181,18 @@ def main():
         'lane':      (task_lane,        lane.draw_debug,            'NO LANE', _RED),
         'edge':      (task_edge,        edge.draw_debug,            'NO EDGE', _RED),
         'histogram': (task_histogram,   line_histogram.draw_debug,  'NO LINE', _RED),
+        'ball':      (task_ball,        ball.draw_debug,            'NO BALL', _RED),
     }
     if VISION_MODE not in tasks:
         print(f"[MaixCAM] unknown VISION_MODE: {VISION_MODE}")
         return
     task_fn, draw_fn, no_label, no_color = tasks[VISION_MODE]
 
-    _cam.init(width=DETECT_W, height=DETECT_H, pixformat=config.CAM_PIXFMT)
+    # 应用模式专属分辨率（如 YOLO 模型需要 320×320）
+    mode_w, mode_h = MODE_RESOLUTION.get(VISION_MODE, (DETECT_W, DETECT_H))
+    print(f"[MaixCAM] detect: {mode_w}x{mode_h}  uart_thresh:{UART_THRESH}px")
+
+    _cam.init(width=mode_w, height=mode_h, pixformat=config.CAM_PIXFMT)
 
     try:
         _uart.init()
@@ -186,9 +208,9 @@ def main():
     _t0 = time.time()
     print("[MaixCAM] loop start")
 
-    # 图像中心参考点（跟随检测分辨率）
-    img_cx = DETECT_W // 2
-    img_cy = DETECT_H // 2
+    # 图像中心参考点（跟随实际检测分辨率）
+    img_cx = mode_w // 2
+    img_cy = mode_h // 2
 
     try:
         while not app.need_exit():
@@ -225,7 +247,10 @@ def main():
                 dt_detect = (t_detect - t_cap)    * 1000
                 dt_draw   = (t_draw   - t_detect) * 1000
                 dt_total  = (t_draw   - t0)       * 1000
-                print(f"[FPS] {_fps:.1f}  total:{dt_total:.1f}ms | cap:{dt_cap:.1f} detect:{dt_detect:.1f} draw:{dt_draw:.1f}")
+                extra = ""
+                if VISION_MODE == 'ball' and result:
+                    extra = f" balls:{result['count']}/{result['count_raw']}"
+                print(f"[FPS] {_fps:.1f}  total:{dt_total:.1f}ms | cap:{dt_cap:.1f} detect:{dt_detect:.1f} draw:{dt_draw:.1f}{extra}")
 
     except KeyboardInterrupt:
         print("[MaixCAM] user stop")
