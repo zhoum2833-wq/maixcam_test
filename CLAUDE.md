@@ -17,8 +17,21 @@ maixcam_vision_temple/  → 视觉工程模板
 
 - 一个测试文件只测一个模块
 - 测试脚本命名：`test_模块名.py`
-- 测试通过 → 模块代码提交到 `maixcam_modules`
-- 测试失败 → 修本工程 → 再测 → 通过后回灌模块库
+- 测试通过 → 模块代码同步到 `maixcam_modules` 和 `maixcam_vision_temple`
+- 测试失败 → 修本工程 → 再测 → 通过后同步
+
+## 同步流程
+
+本工程是模块代码的**测试与验证地**，不是权威来源。
+权威来源是 `maixcam_modules/`，模板在 `maixcam_vision_temple/`。
+
+```
+改代码 → maixcam_test 测试通过
+                ├──→ 同步 module/*.py 到 maixcam_modules/
+                └──→ 同步 module/*.py 到 maixcam_vision_temple/module/
+```
+
+修改模块代码时，改 `maixcam_test/module/` → 测试通过 → 复制到另外两个库。
 
 ## 目录
 
